@@ -16,6 +16,10 @@
 
 # Installation
 
+## Fork
+This is a fork from tfarras/nestjs-firebase-auth. All credits to him.
+I jsut updated dependencies
+
 ## Install peer dependencies
 
 ```bash
@@ -32,7 +36,7 @@ npm install @nestjs/passport
 ## Install strategy
 
 ```bash
-npm install @tfarras/nestjs-firebase-auth
+npm install @hannesroth88/nestjs-firebase-auth
 ```
 
 # Important
