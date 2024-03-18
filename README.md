@@ -18,7 +18,7 @@
 
 ## Fork
 This is a fork from tfarras/nestjs-firebase-auth. All credits to him.
-I jsut updated dependencies
+I just updated dependencies and a bit of documentation.
 
 ## Install peer dependencies
 
@@ -153,6 +153,152 @@ export class FirebaseStrategy extends PassportStrategy(FirebaseAuthStrategy, 'fi
   async validate(payload: FirebaseUser): Promise<FirebaseUser> {
     // Do here whatever you want and return your user
     return payload;
+  }
+}
+```
+
+
+# Add Role requirement
+
+In cases when you want to implement a Role Based Authorization you can do sth like this:
+
+## Controller
+
+```typescript
+import {
+  Controller,
+  Get,
+  Param,
+  Put,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
+import { UserService } from './user.service';
+import { UserRecord } from 'firebase-admin/lib/auth/user-record';
+import { Role } from 'src/auth/roles/roles.model';
+import { RolesOneOf } from 'src/auth/roles/roles.decorator';
+import { FirebaseAuthGuard } from 'src/auth/jwt.guard';
+import { UserRolesDto } from './dto/user-role-update.dto';
+import { ListUsersResult } from 'firebase-admin/lib/auth/base-auth';
+
+@UseGuards(FirebaseAuthGuard)
+@RolesOneOf(Role.ADMIN)
+@Controller('users')
+export class UserController {
+  constructor(private userService: UserService) {}
+
+  @Get()
+  async listUsers(): Promise<ListUsersResult> {
+    return this.userService.listUsers();
+  }
+
+  @Get(':id')
+  async getUser(@Param('id') userId: string): Promise<UserRecord> {
+    return await this.userService.getUser(userId);
+  }
+
+  @Put(':id/roles')
+  async updateUserRoles(
+    @Param('id') userId: string,
+    @Query() query: UserRolesDto,
+  ): Promise<void> {
+    await this.userService.updateUserRoles(userId, query.rolesToUpdate);
+  }
+}
+```
+
+## AuthGuard
+```typescript
+import { ExecutionContext, Injectable, Logger } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+import { Reflector } from '@nestjs/core';
+import { FirebaseJwtPayload } from './firebase/firebase.types';
+import { Role } from './roles/roles.model';
+
+@Injectable()
+export class FirebaseAuthGuard extends AuthGuard('firebase') {
+  private readonly logger = new Logger(FirebaseAuthGuard.name);
+  constructor(
+    private reflector: Reflector,
+  ) {
+    super();
+  }
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    // call AuthGuard in order to ensure user is injected in request
+    const baseGuardResult = await super.canActivate(context);
+    if (!baseGuardResult) {
+      // unsuccessful authentication return false
+      this.logger.error('baseGuardResult is null');
+      return false;
+    }
+
+    // successfull authentication, user is injected
+    const { user } = context.switchToHttp().getRequest();
+    const jwt = user as FirebaseJwtPayload;
+
+    const requireRolesOneOf = this.reflector.getAllAndOverride<Role[]>('rolesOneOf', [context.getHandler(), context.getClass()]);
+    if (requireRolesOneOf) {
+      const hasRole = requireRolesOneOf.some((role) => jwt.roles.includes(role));
+      if (!hasRole) {
+        this.logger.error(`User ${jwt.user_id} does not have any of the required roles: ${requireRolesOneOf.join(', ')}`);
+      }
+      return hasRole;
+    } else {
+      return true;
+    }
+  }
+}
+```
+
+## Role Decorator
+
+```typescript
+import { SetMetadata } from '@nestjs/common';
+
+export const RolesOneOf = (...roles: string[]) => SetMetadata('rolesOneOf', roles);
+
+export enum Role {
+    ADMIN = 'ADMIN',
+    GUEST = 'GUEST',
+  }
+```
+
+## User Service
+```typescript
+import { Injectable, InternalServerErrorException } from '@nestjs/common';
+import { ListUsersResult } from 'firebase-admin/lib/auth/base-auth';
+import * as admin from 'firebase-admin';
+import { UserRecord } from 'firebase-admin/lib/auth/user-record';
+
+@Injectable()
+export class UserService {
+  constructor() {}
+
+  async getUser(userId: string): Promise<UserRecord> {
+    try {
+      return await admin.auth().getUser(userId);
+    } catch (error) {
+      console.error('Error getting user:', error);
+      throw new InternalServerErrorException('Error getting user');
+    }
+  }
+
+  async listUsers(): Promise<ListUsersResult> {
+    try {
+      return await admin.auth().listUsers();
+    } catch (error) {
+      console.error('Error getting users:', error);
+      throw new InternalServerErrorException('Error getting users');
+    }
+  }
+
+  async updateUserRoles(uid: string, roles: string[]): Promise<void> {
+    try {
+      await admin.auth().setCustomUserClaims(uid, { roles });
+    } catch (error) {
+      console.error('Error updating user roles:', error);
+      throw new InternalServerErrorException('Error updating user roles');
+    }
   }
 }
 ```
